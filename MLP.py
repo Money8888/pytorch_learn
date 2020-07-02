@@ -97,8 +97,21 @@ def train(train_batch, test_batch, optimizer = None):
         # 测试集
         test_acc_sum, test_n = 0, 0
         for testX, testy in test_batch:
-            testy_yre = model(testX, params)
-            test_acc_sum += (testy_yre.argmax(dim=1) == testy).float().sum().item()
+            # 测试时不应该使用丢弃法
+            if isinstance(model, torch.nn.Module):
+                # 针对torch.nn.Module包定义好的模型
+                # 评估模式，关闭dropout
+                model.eval()
+                test_acc_sum += (model(testX, params).argmax(dim=1) == testy).float().sum().item()
+                # 改回训练模式
+                model.train()
+            else:
+                # 针对自定义模型
+                if("bool_training" in model.__code__.co_varnames):
+                    # 如果模型中有bool_training这个参数
+                    test_acc_sum += (model(testX, params, bool_training=False).argmax(dim=1) == testy).float().sum().item()
+                else:
+                    test_acc_sum += (model(testX, params).argmax(dim=1) == testy).float().sum().item()
             test_n += testy.shape[0]
         test_acc = test_acc_sum / test_n
 
