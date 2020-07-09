@@ -1,9 +1,10 @@
-import torch
-import numpy as np
 import sys
+
+import torch
+
 sys.path.append("..")
 from collections import OrderedDict
-from softmax_regress import loadData, get_fashion_mnist_labels, show_fashion_mnist
+from softmax.softmax_regress import loadData, get_fashion_mnist_labels, show_fashion_mnist
 
 # 图片参数
 inputn = 784

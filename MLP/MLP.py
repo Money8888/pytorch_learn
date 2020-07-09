@@ -4,9 +4,10 @@
 训练过程中，使用Dropout，其实就是对部分权重和偏置在某次迭代训练过程中，不参与计算和更新而已，
 并不是不再使用这些权重和偏置了(预测和预测时，会使用全部的神经元，包括使用训练时丢弃的神经元)
 '''
-import torch
 import numpy as np
-from softmax_regress import loadData, get_fashion_mnist_labels, show_fashion_mnist
+import torch
+
+from softmax.softmax_regress import loadData, get_fashion_mnist_labels, show_fashion_mnist
 
 # 输入层 输出层 隐含层两层节点个数
 inputsn, outputsn, hiddensn1, hiddensn2 = 784, 10, 256, 256

@@ -1,7 +1,9 @@
-import torch
 import sys
+
+import torch
+
 sys.path.append("..")
-from softmax_regress import loadData, get_fashion_mnist_labels, show_fashion_mnist
+from softmax.softmax_regress import loadData, get_fashion_mnist_labels, show_fashion_mnist
 # 输入层 输出层 隐含层节点个数
 inputsn, outputsn, hiddensn1, hiddensn2 = 784, 10, 256, 256
 # 丢弃法概率
