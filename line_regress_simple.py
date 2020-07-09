@@ -12,6 +12,7 @@ import torch.utils.data as Data
 import numpy as np
 from collections import OrderedDict
 
+# 继承Module类来构造模型
 class LineNN(torch.nn.Module):
     def __init__(self, n_feature):
         '''
@@ -21,6 +22,8 @@ class LineNN(torch.nn.Module):
         self.linear = torch.nn.Linear(n_feature, 1)
 
     # 前向传播
+    # 无须定义反向传播函数。系统将通过自动求梯度而自动生成反向传播所需的backward函数
+    # forward 被Module的__call__调用
     def forward(self, X):
         y = self.linear(X)
         return y
@@ -57,6 +60,11 @@ def train():
         ('linear', torch.nn.Linear(X.size()[1], 1))
         # ......
     ]))
+
+    # Sequential类，
+    # 接收一个子模块的有序字典（OrderedDict）或者一系列子模块作为参数来逐一添加Module的实例
+    # 模型的前向计算就是将这些实例按添加的顺序逐一计算
+
 
     # 初始化模型参数
     torch.nn.init.normal_(net.linear.weight, mean=0, std=0.01)

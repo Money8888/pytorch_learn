@@ -3,7 +3,9 @@ import sys
 sys.path.append("..")
 from softmax_regress import loadData, get_fashion_mnist_labels, show_fashion_mnist
 # 输入层 输出层 隐含层节点个数
-inputsn, outputsn, hiddensn = 784, 10, 256
+inputsn, outputsn, hiddensn1, hiddensn2 = 784, 10, 256, 256
+# 丢弃法概率
+drop_prob1, drop_prob2 = 0.2, 0.5
 
 class FlattenLayer(torch.nn.Module):
     def __init__(self):
@@ -18,10 +20,16 @@ def train(train_batch, test_batch):
     model = torch.nn.Sequential(
         FlattenLayer(),
         # 输入层
-        torch.nn.Linear(inputsn, hiddensn),
+        torch.nn.Linear(inputsn, hiddensn1),
         # 激活函数
         torch.nn.ReLU(),
-        torch.nn.Linear(hiddensn, outputsn)
+        # dropout激活层
+        torch.nn.Dropout(drop_prob1),
+        # 隐含层
+        torch.nn.Linear(hiddensn1, hiddensn2),
+        torch.nn.ReLU(),
+        torch.nn.Dropout(drop_prob2),
+        torch.nn.Linear(hiddensn2, outputsn)
     )
 
     # 初始化参数
@@ -61,8 +69,14 @@ def train(train_batch, test_batch):
         # 测试集
         test_acc_sum, test_n = 0, 0
         for testX, testy in test_batch:
-            testy_yre = model(testX)
-            test_acc_sum += (testy_yre.argmax(dim=1) == testy).float().sum().item()
+            # 测试时不应该使用丢弃法
+            assert isinstance(model, torch.nn.Module)
+            # 针对torch.nn.Module包定义好的模型
+            # 评估模式，关闭dropout
+            model.eval()
+            test_acc_sum += (model(testX).argmax(dim=1) == testy).float().sum().item()
+            # 改回训练模式
+            model.train()
             test_n += testy.shape[0]
         test_acc = test_acc_sum / test_n
 
@@ -73,6 +87,7 @@ def train(train_batch, test_batch):
 def predict(model, test_batch):
     predX, predy = iter(test_batch).next()
     true_labels = get_fashion_mnist_labels(predy.numpy())
+    model.eval()
     pred_labels = get_fashion_mnist_labels(model(predX).argmax(dim=1).numpy())
     titles = [true + '\n' + pred for true, pred in zip(true_labels, pred_labels)]
     show_fashion_mnist(predX[0:9], titles[0:9])

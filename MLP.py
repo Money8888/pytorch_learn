@@ -1,5 +1,8 @@
 '''
 多层感知机
+含dropout
+训练过程中，使用Dropout，其实就是对部分权重和偏置在某次迭代训练过程中，不参与计算和更新而已，
+并不是不再使用这些权重和偏置了(预测和预测时，会使用全部的神经元，包括使用训练时丢弃的神经元)
 '''
 import torch
 import numpy as np
@@ -32,11 +35,11 @@ def model(X, params, bool_training=True):
         # 训练模型时才dropout
         # 在第一层全连接后添加丢弃层
         H1 = dropout(H1, drop_prob1)
-    H2 = (torch.matmul(H1, params[3]) + params[4]).relu()
+    H2 = (torch.matmul(H1, params[2]) + params[3]).relu()
     if bool_training:
         # 在第二层全连接后添加丢弃层
         H2 = dropout(H2, drop_prob2)
-    return torch.matmul(H2, params[5]) + params[6]
+    return torch.matmul(H2, params[4]) + params[5]
 
 def sgd(params, lr, batch_size):
     for param in params:
@@ -122,7 +125,7 @@ def train(train_batch, test_batch, optimizer = None):
 def predict(model, params, test_batch):
     predX, predy = iter(test_batch).next()
     true_labels = get_fashion_mnist_labels(predy.numpy())
-    pred_labels = get_fashion_mnist_labels(model(predX, params).argmax(dim=1).numpy())
+    pred_labels = get_fashion_mnist_labels(model(predX, params, bool_training=False).argmax(dim=1).numpy())
     titles = [true + '\n' + pred for true, pred in zip(true_labels, pred_labels)]
     show_fashion_mnist(predX[0:9], titles[0:9])
 
