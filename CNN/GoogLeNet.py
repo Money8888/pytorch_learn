@@ -1,13 +1,12 @@
 '''
-串联多个由卷积层和“全连接”层构成的小网络来构建一个深层网络
-全连接层用1 * 1的卷积层代替
+并行网络
 '''
+import time
 import torch
 import torch.nn.functional as F
-import torchvision
 import torch.utils.data as Data
+import torchvision
 import sys
-import time
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
@@ -36,25 +35,29 @@ def loadData(batch_size, resize=None):
 
     return train_batch, test_batch
 
-def nin_block(in_channels, out_channels, kernel_size, stride, padding):
-    '''
-    :param in_channels: 输入通道数
-    :param out_channels: 输出通道数
-    :param kernel_size: 核矩阵大小
-    :param stride: 步长
-    :param padding: 填充大小
-    :return: 
-    '''
-    block = torch.nn.Sequential(
-        torch.nn.Conv2d(in_channels, out_channels, kernel_size, stride, padding),
-        torch.nn.ReLU(),
-        # 全连接层，1*1卷积层
-        torch.nn.Conv2d(out_channels, out_channels, kernel_size=1),
-        torch.nn.ReLU(),
-        torch.nn.Conv2d(out_channels, out_channels, kernel_size=1),
-        torch.nn.ReLU()
-    )
-    return block
+class Inception(torch.nn.Module):
+    # out_c1~4为四条线路输出层的通道数,多个单元即为数组
+    def __init__(self, in_channels, out_c1, out_c2, out_c3, out_c4):
+        super(Inception, self).__init__()
+        #线路1 单1*1卷积层
+        self._route1_1 = torch.nn.Conv2d(in_channels, out_c1, kernel_size=1)
+        #线路2 1 x 1卷积层后接3 x 3卷积层
+        self._route2_1 = torch.nn.Conv2d(in_channels, out_c2[0], kernel_size=1)
+        self._route2_2 = torch.nn.Conv2d(out_c2[0], out_c2[1], kernel_size=3, padding=1)
+        #线路3，1 x 1卷积层后接5 x 5卷积层
+        self._route3_1 = torch.nn.Conv2d(in_channels, out_c3[0], kernel_size=1)
+        self._route3_2 = torch.nn.Conv2d(out_c3[0], out_c3[1], kernel_size=5, padding=2)
+        #线路4，3 x 3最大池化层后接1 x 1卷积层
+        self._route4_1 = torch.nn.MaxPool2d(kernel_size=3, stride=1, padding=1)
+        self._route4_2 = torch.nn.Conv2d(in_channels, out_c4, kernel_size=1)
+
+    def forward(self, x):
+        route1 = F.relu(self._route1_1(x))
+        route2 = F.relu(self._route2_2(F.relu(self._route2_1(x))))
+        route3 = F.relu(self._route3_2(F.relu(self._route3_1(x))))
+        route4 = F.relu(self._route4_2(self._route4_1(x)))
+        # 在通道维上连结输出
+        return torch.cat((route1, route2, route3, route4), dim=1)
 
 class GlobalAvgPool2d(torch.nn.Module):
     # 全局平均池化层可通过将池化窗口形状设置成输入的高和宽实现
@@ -70,35 +73,52 @@ class FlattenLayer(torch.nn.Module):
         # x shape: (batch_size, *, *, ...)
         return x.view(x.shape[0], -1)
 
-
-def NIN():
-    '''
-    0 output shape:  torch.Size([1, 96, 54, 54])
-    1 output shape:  torch.Size([1, 96, 26, 26])
-    2 output shape:  torch.Size([1, 256, 26, 26])
-    3 output shape:  torch.Size([1, 256, 12, 12])
-    4 output shape:  torch.Size([1, 384, 12, 12])
-    5 output shape:  torch.Size([1, 384, 5, 5])
-    6 output shape:  torch.Size([1, 384, 5, 5])
-    7 output shape:  torch.Size([1, 10, 5, 5])
-    8 output shape:  torch.Size([1, 10, 1, 1])
-    9 output shape:  torch.Size([1, 10])
-    '''
-    modle = torch.nn.Sequential(
-        nin_block(1, 96, kernel_size=11, stride=4, padding=0),
-        torch.nn.MaxPool2d(kernel_size=3, stride=2),
-        nin_block(96, 256, kernel_size=5, stride=1, padding=2),
-        torch.nn.MaxPool2d(kernel_size=3, stride=2),
-        nin_block(256, 384, kernel_size=3, stride=1, padding=1),
-        torch.nn.MaxPool2d(kernel_size=3, stride=2),
-        torch.nn.Dropout(0.5),
-
-        # 类别
-        nin_block(384, 10, kernel_size=3, stride=1, padding=1),
-        GlobalAvgPool2d(),
-        FlattenLayer(),
+def GoogLeNet():
+    # 模块1，输出通道为64，卷积层7 * 7，池化层3 * 3
+    block1 = torch.nn.Sequential(
+        torch.nn.Conv2d(1, 64, kernel_size=7, stride=2, padding=3),
+        torch.nn.ReLU(),
+        torch.nn.MaxPool2d(kernel_size=3, stride=2, padding=1)
     )
-    return modle
+    # 模块2 先是64通道的1×1卷积层，然后是将通道增大3倍的3×33×3卷积层
+    block2 = torch.nn.Sequential(
+        torch.nn.Conv2d(64, 64, kernel_size=1),
+        torch.nn.Conv2d(64, 192, kernel_size=3, padding=1),
+        torch.nn.MaxPool2d(kernel_size=3, stride=2, padding=1)
+    )
+
+    block3 = torch.nn.Sequential(
+        Inception(192, 64, (96, 128), (16, 32), 32),
+        Inception(256, 128, (128, 192), (32, 96), 64),
+        torch.nn.MaxPool2d(kernel_size=3, stride=2, padding=1)
+    )
+
+    block4 = torch.nn.Sequential(
+        Inception(480, 192, (96, 208), (16, 48), 64),
+        Inception(512, 160, (112, 224), (24, 64), 64),
+        Inception(512, 128, (128, 256), (24, 64), 64),
+        Inception(512, 112, (144, 288), (32, 64), 64),
+        Inception(528, 256, (160, 320), (32, 128), 128),
+        torch.nn.MaxPool2d(kernel_size=3, stride=2, padding=1)
+    )
+
+    block5 = torch.nn.Sequential(
+        Inception(832, 256, (160, 320), (32, 128), 128),
+        Inception(832, 384, (192, 384), (48, 128), 128),
+        GlobalAvgPool2d()
+    )
+
+    model = torch.nn.Sequential(
+        block1,
+        block2,
+        block3,
+        block4,
+        block5,
+        FlattenLayer(),
+        # 全连接层
+        torch.nn.Linear(1024, 10)
+    )
+    return model
 
 def evaluate_accuracy(data_batch, model, device = None):
     if device is None and isinstance(model, torch.nn.Module):
@@ -160,12 +180,11 @@ def train(model, train_batch, test_batch, batch_size, optimizer, device, num_epo
         print("第%d轮的损失为%.4f,训练acc为%.3f，测试acc %.3f，耗时%.1f sec" %
               (epoch + 1, train_loss_sum / batch_count, train_acc_sum / n, test_acc, time.time() - start))
 
-def predict(model, test_batch, device = None):
+def predict(model, test_batch, device=None):
     if device is None and isinstance(model, torch.nn.Module):
         device = list(model.parameters())[0].device
 
     predX, predy = iter(test_batch).next()
-
 
     acc_sum, n = 0, 0
 
@@ -185,23 +204,13 @@ def predict(model, test_batch, device = None):
 
 
 if __name__ == "__main__":
-    # X = torch.rand(1, 1, 224, 224)
-    # model = NIN()
-    # for name, block in model.named_children():
-    #     X = block(X)
-    #     print(name, 'output shape: ', X.shape)
+    batch_size = 128
+    # 如出现“out of memory”的报错信息，可减小batch_size或resize
+    train_batch, test_batch = loadData(batch_size, resize=96)
 
-    num_epochs = 1
-    batch_size = 256
-    # 加载数据
-    train_batch, test_batch = loadData(batch_size, resize=224)
-    model = NIN()
-    print(model)
-    # 学习率
-    lr = 0.002
-    # 优化器选择Adam
+    lr, num_epochs = 0.001, 5
+    model = GoogLeNet()
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
-
     train(model, train_batch, test_batch, batch_size, optimizer, device, num_epochs)
 
     pre_acc = predict(model, test_batch)
