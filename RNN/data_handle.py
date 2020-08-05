@@ -3,7 +3,7 @@ import zipfile
 import random
 import torch
 
-
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 def data_load():
     with zipfile.ZipFile(r"D:\PycharmProjects\pytorch_learn\RNN\data\jaychou_lyrics.txt.zip") as zin:
@@ -73,6 +73,24 @@ def data_sample_consecutive(corpus_index, batch_size, num_steps, device=None):
         X = index[:, i: i + num_steps]
         Y = index[:, i + 1: i + num_steps + 1]
         yield X, Y
+
+# one-hot编码
+def one_hot(x, n_class, dtype=torch.float32):
+    '''
+    如果一个字符的索引是整数i, 则创建一个全0的长为N的向量，并将其位置为i的元素设成1
+    :param x: 
+    :param n_class: 不同字符的数量,等于字典大小
+    :param dtype: 
+    :return: 
+    '''
+    x = x.long()
+    result = torch.zeros(x.shape[0], n_class, dtype=dtype, device=device)
+    result.scatter_(1, x.view(-1, 1), 1)
+    return result
+
+def to_onehot(X, n_class):
+    # X shape: (batch, seq_len), output: seq_len elements of (batch, n_class)
+    return [one_hot(X[:, i], n_class) for i in range(X.shape[1])]
 
 
 if __name__ == "__main__":

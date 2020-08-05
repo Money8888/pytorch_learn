@@ -1,34 +1,68 @@
-# 循环神经网络
-import time
+# 长记忆神经网络
+'''
+增加了遗忘门，输入门，输出门
+记忆细胞
+'''
 
-import math
 import torch
 import numpy as np
 from data_handle import *
+import time
+import math
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-
 word_list, word_dict, corpus_index, word_len = data_load()
 inputsn, hiddensn, outputsn = word_len, 256, word_len
 
-# 初始化模型参数
-def init_param():
-    def _norm(shape):
-        tt = torch.tensor(np.random.normal(0, 0.01, size=shape), device=device, dtype=torch.float32)
-        return torch.nn.Parameter(tt, requires_grad=True)
 
-    # 隐含层参数
-    W_xh = _norm((inputsn, hiddensn))
-    W_hh = _norm((hiddensn, hiddensn))
-    b_h = torch.nn.Parameter(torch.zeros(hiddensn, device=device), requires_grad=True)
+def get_params():
+    def _one(shape):
+        ts = torch.tensor(np.random.normal(0, 0.01, size=shape), device=device, dtype=torch.float32)
+        return torch.nn.Parameter(ts, requires_grad=True)
+    def _three():
+        return (_one((inputsn, hiddensn)),
+                _one((hiddensn, hiddensn)),
+                torch.nn.Parameter(torch.zeros(hiddensn, device=device, dtype=torch.float32),requires_grad=True))
+
+    W_xi, W_hi, b_i = _three()  # 输入门参数
+    W_xf, W_hf, b_f = _three()  # 遗忘门参数
+    W_xo, W_ho, b_o = _three()  # 输出门参数
+    W_xc, W_hc, b_c = _three()  # 候选记忆细胞参数
+
     # 输出层参数
-    W_hq = _norm((hiddensn, outputsn))
-    b_q = torch.nn.Parameter(torch.zeros(outputsn,device=device), requires_grad=True)
-    return torch.nn.ParameterList([W_xh, W_hh, b_h, W_hq, b_q])
+    # 输出层参数
+    W_hq = _one((hiddensn, outputsn))
+    b_q = torch.nn.Parameter(torch.zeros(outputsn, device=device, dtype=torch.float32), requires_grad=True)
+    return torch.nn.ParameterList([W_xi, W_hi, b_i, W_xf, W_hf, b_f, W_xo, W_ho, b_o, W_xc, W_hc, b_c, W_hq, b_q])
 
-def init_rnn_state(batch_size, hiddensn, device):
-    # 返回初始化的隐藏状态
-    return torch.zeros((batch_size, hiddensn), device=device)
+def init_lstm_state(batch_size, num_hiddens, device):
+    return (torch.zeros((batch_size, num_hiddens), device=device),
+            torch.zeros((batch_size, num_hiddens), device=device))
+# lstm单元
+def lstm(inputs, state, params):
+    [W_xi, W_hi, b_i, W_xf, W_hf, b_f, W_xo, W_ho, b_o, W_xc, W_hc, b_c, W_hq, b_q] = params
+    # 隐含层细胞和记忆细胞
+    (H, C) = state
+    outputs = []
+    for X in inputs:
+        # 输出门
+        I = torch.sigmoid(torch.matmul(X, W_xi) + torch.matmul(H, W_hi) + b_i)
+        # 遗忘门
+        F = torch.sigmoid(torch.matmul(X, W_xf) + torch.matmul(H, W_hf) + b_f)
+        # 输出门
+        O = torch.sigmoid(torch.matmul(X, W_xo) + torch.matmul(H, W_ho) + b_o)
+        # 记忆细胞
+        C_candidate = torch.tanh(torch.matmul(X, W_xc) + torch.matmul(H, W_hc) + b_c)
+        C = F * C + I * C_candidate
+        H = O * torch.tanh(C)
+        Y = torch.matmul(H, W_hq) + b_q
+        outputs.append(Y)
+    return outputs, (H, C)
+
+def sgd(params, lr, batch_size):
+    for param in params:
+        # 注意这里更改param时用的param.data
+        param.data -= lr * param.grad / batch_size
 
 def grad_clip(params, theta, device):
     '''
@@ -41,24 +75,6 @@ def grad_clip(params, theta, device):
     if norm > theta:
         for param in params:
             param.grad.data *= (theta / norm)
-
-def sgd(params, lr, batch_size):
-    for param in params:
-        # 注意这里更改param时用的param.data
-        param.data -= lr * param.grad / batch_size
-
-def rnn(inputs, state, params):
-    # inputs和outputs维度皆为(batch_size, vocab_size)
-    W_xh, W_hh, b_h, W_hq, b_q = params
-    H = state
-    outputs = []
-
-    for X in inputs:
-        # 进入隐含层计算
-        H = torch.tanh(torch.matmul(X, W_xh) + torch.matmul(H, W_hh) + b_h)
-        Y = torch.matmul(H, W_hq) + b_q
-        outputs.append(Y)
-    return outputs, H
 
 def predict_rnn(prefix, next_num_chars, rnn, params, init_rnn_state,
                 hiddensn, word_len, device, word_list, word_dict):
@@ -82,12 +98,12 @@ def predict_rnn(prefix, next_num_chars, rnn, params, init_rnn_state,
             output.append(int(Y[0].argmax(dim=1).item()))
     return ''.join([word_list[i] for i in output])
 
-
-def train_predict(rnn, init_param, init_rnn_state, hiddensn,
-                          word_len, device, corpus_index, word_list,
-                          word_dict, is_random_random, num_epochs, num_steps,
-                          lr, clip_theta, batch_size, pred_period,
-                          pred_len, prefixes):
+# 训练模型
+def train_predict(model, init_param, init_rnn_state, hiddensn,
+                  word_len, device, corpus_index, word_list,
+                  word_dict, is_random_random, num_epochs, num_steps,
+                  lr, clip_theta, batch_size, pred_period,
+                  pred_len, prefixes):
     if is_random_random:
         # 是否随机采样
         data_fn = data_sample_random
@@ -117,7 +133,7 @@ def train_predict(rnn, init_param, init_rnn_state, hiddensn,
 
             inputs = to_onehot(X, word_len)
             # outputs为num_steps个形状为(batch_size, vocab_size)的矩阵
-            outputs, state = rnn(inputs, state, params)
+            outputs, state = model(inputs, state, params)
             # 进行拼接，拼接后为batch_size * num_steps的向量
             outputs = torch.cat(outputs, dim=0)
             # Y的形状是(batch_size, num_steps)
@@ -147,14 +163,5 @@ def train_predict(rnn, init_param, init_rnn_state, hiddensn,
             # perplexity困惑度
             print('epoch %d, perplexity %f, time %.2f sec' % (epoch + 1, math.exp(loss_sum / n), time.time() - start))
             for prefix in prefixes:
-                print(' -', predict_rnn(prefix, pred_len, rnn, params, init_rnn_state,
+                print(' -', predict_rnn(prefix, pred_len, model, params, init_rnn_state,
                                         hiddensn, word_len, device, word_list, word_dict))
-
-if __name__ == "__main__":
-    num_epochs, num_steps, batch_size, lr, clipping_theta = 250, 35, 32, 1e2, 1e-2
-    pred_period, pred_len, prefixes = 50, 50, ['分开', '不分开']
-    train_predict(rnn, init_param, init_rnn_state, hiddensn,
-                          word_len, device, corpus_index, word_list,
-                          word_dict, True, num_epochs, num_steps, lr,
-                          clipping_theta, batch_size, pred_period, pred_len,
-                          prefixes)
